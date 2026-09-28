@@ -132,6 +132,9 @@ type (
 		costs metrics.TokenUsage
 		// metrics tracking.
 		metrics metrics.Metrics
+		// bodyBuf accumulates request body chunks in FULL_DUPLEX_STREAMED mode.
+		// The complete body is processed when EndOfStream is true.
+		bodyBuf []byte
 	}
 )
 
@@ -429,9 +432,10 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessReque
 }
 
 // ProcessRequestBody implements [Processor.ProcessRequestBody].
-// In BUFFERED mode, this receives the actual request body after all previous
-// HTTP-level filters have processed it. ModelNameOverride and httpBodyMutation
-// are applied on top of this body.
+// In FULL_DUPLEX_STREAMED mode, the body arrives in chunks. Intermediate
+// chunks are accumulated in bodyBuf and the body is held (empty BodyMutation).
+// When EndOfStream is true, the complete body is processed: translation,
+// bodyMutation, and auth signing are applied to the full body.
 func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequestBody(ctx context.Context, rawBody *extprocv3.HttpBody) (res *extprocv3.ProcessingResponse, err error) {
 	defer func() {
 		if err != nil {
@@ -439,11 +443,32 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessReque
 		}
 	}()
 
+	// Accumulate chunks until end_of_stream.
+	u.bodyBuf = append(u.bodyBuf, rawBody.Body...)
+	if !rawBody.EndOfStream {
+		return &extprocv3.ProcessingResponse{
+			Response: &extprocv3.ProcessingResponse_RequestBody{
+				RequestBody: &extprocv3.BodyResponse{
+					Response: &extprocv3.CommonResponse{
+						Status: extprocv3.CommonResponse_CONTINUE,
+						BodyMutation: &extprocv3.BodyMutation{
+							Mutation: &extprocv3.BodyMutation_Body{Body: []byte{}},
+						},
+					},
+				},
+			},
+		}, nil
+	}
+
+	// All chunks received — process the complete body.
+	body := u.bodyBuf
+	u.bodyBuf = nil
+
 	// Determine forceBodyMutation: on retry we must replay the body.
 	forceBodyMutation := u.onRetry() || u.parent.forceBodyMutation
 
 	// Apply the translator's RequestBody on the actual body from Envoy.
-	newHeaders, newBody, err := u.translator.RequestBody(rawBody.Body, u.parent.originalRequestBody, forceBodyMutation)
+	newHeaders, newBody, err := u.translator.RequestBody(body, u.parent.originalRequestBody, forceBodyMutation)
 	if err != nil {
 		if userFacingErr := internalapi.GetUserFacingError(err); userFacingErr != nil {
 			u.logger.Info("returning user-facing error for invalid request", slog.String("error", err.Error()))
@@ -457,7 +482,7 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessReque
 	// Apply backend httpBodyMutation on top of the translator's body (if any).
 	mutatorHasMutations := u.bodyMutator != nil && u.bodyMutator.HasMutations()
 	if bodyMutation != nil || mutatorHasMutations || forceBodyMutation {
-		bodyMutation = applyBodyMutation(u.bodyMutator, bodyMutation, rawBody.Body, u.logger)
+		bodyMutation = applyBodyMutation(u.bodyMutator, bodyMutation, body, u.logger)
 	}
 
 	// The body that will be sent upstream: the mutated body if present,
@@ -466,7 +491,7 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessReque
 	if bodyMutation != nil && bodyMutation.GetBody() != nil {
 		upstreamBody = bodyMutation.GetBody()
 	} else {
-		upstreamBody = rawBody.Body
+		upstreamBody = body
 	}
 
 	// Perform backend auth. The auth handler needs the final body for

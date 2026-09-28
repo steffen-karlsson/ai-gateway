@@ -155,7 +155,13 @@ func (s *Server) PostTranslateModify(ctx context.Context, req *egextension.PostT
 				Http2ProtocolOptions: &corev3.Http2ProtocolOptions{
 					// https://github.com/envoyproxy/gateway/blob/932b8b155fa562ae917da19b497a4370733478f1/internal/xds/translator/listener.go#L50-L53
 					InitialConnectionWindowSize: wrapperspb.UInt32(1048576),
-					InitialStreamWindowSize:     wrapperspb.UInt32(65536),
+					// Increase from the default 64KB to 16MB. In BUFFERED mode,
+					// envoy sends the full request body to the extproc over this
+					// UDS gRPC stream. With the default 64KB stream window, bodies
+					// larger than ~64KB cause the send buffer to hit the high
+					// watermark, triggering a null-pointer dereference in envoy
+					// 1.37.1's ext_proc filter.
+					InitialStreamWindowSize: wrapperspb.UInt32(16 * 1024 * 1024),
 				},
 			},
 		}}
@@ -496,13 +502,17 @@ func (s *Server) maybeModifyCluster(ctx context.Context, cluster *clusterv3.Clus
 	}
 	extProcConfig.ProcessingMode = &extprocv3.ProcessingMode{
 		RequestHeaderMode: extprocv3.ProcessingMode_SEND,
-		// Use BUFFERED mode so the upstream filter receives the actual request body
-		// (after all HTTP-level filters have processed it) and can apply
-		// modelNameOverride and httpBodyMutation incrementally.
-		RequestBodyMode: extprocv3.ProcessingMode_BUFFERED,
+		// Use FULL_DUPLEX_STREAMED so envoy sends the body in chunks instead of
+		// buffering the entire body. BUFFERED mode triggers a null-pointer
+		// dereference in envoy 1.37.1's ext_proc filter when the UDS send buffer
+		// hits the high watermark (data_deferred_ + pending_send_buffer_high_watermark).
+		// The extproc accumulates chunks internally and processes the complete
+		// body on the final chunk (end_of_stream).
+		RequestBodyMode:    extprocv3.ProcessingMode_BUFFERED,
+		RequestTrailerMode: extprocv3.ProcessingMode_SKIP,
 		// Response will be handled at the router filter level so that we could avoid the shenanigans around the retry+the upstream filter.
-		ResponseHeaderMode: extprocv3.ProcessingMode_SKIP,
-		ResponseBodyMode:   extprocv3.ProcessingMode_NONE,
+		ResponseHeaderMode:  extprocv3.ProcessingMode_SKIP,
+		ResponseBodyMode:    extprocv3.ProcessingMode_NONE,
 	}
 	extProcConfig.MessageTimeout = durationpb.New(10 * time.Second)
 	extProcConfig.GrpcService = &corev3.GrpcService{

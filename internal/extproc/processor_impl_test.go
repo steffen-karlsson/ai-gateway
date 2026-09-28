@@ -104,7 +104,7 @@ func Test_chatCompletionProcessorRouterFilter_ProcessRequestBody(t *testing.T) {
 			config: &filterapi.RuntimeConfig{},
 			logger: slog.Default(),
 		}
-		resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: []byte("nonjson")})
+		resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: []byte("nonjson")})
 		require.NoError(t, err, "Should not return error when returning immediate response")
 		require.NotNil(t, resp, "Response should not be nil")
 
@@ -126,7 +126,7 @@ func Test_chatCompletionProcessorRouterFilter_ProcessRequestBody(t *testing.T) {
 			logger:         slog.Default(),
 			tracer:         tracingapi.NoopTracer[openai.ChatCompletionRequest, openai.ChatCompletionResponse, openai.ChatCompletionResponseChunk]{},
 		}
-		resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: bodyFromModel(t, "some-model", false, nil)})
+		resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: bodyFromModel(t, "some-model", false, nil)})
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		re, ok := resp.Response.(*extprocv3.ProcessingResponse_RequestBody)
@@ -158,7 +158,7 @@ func Test_chatCompletionProcessorRouterFilter_ProcessRequestBody(t *testing.T) {
 			logger:         slog.Default(),
 			tracer:         tracingapi.NoopTracer[openai.ChatCompletionRequest, openai.ChatCompletionResponse, openai.ChatCompletionResponseChunk]{},
 		}
-		resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: bodyFromModel(t, "some-model", false, nil)})
+		resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: bodyFromModel(t, "some-model", false, nil)})
 		require.NoError(t, err)
 		re, ok := resp.Response.(*extprocv3.ProcessingResponse_RequestBody)
 		require.True(t, ok)
@@ -187,7 +187,7 @@ func Test_chatCompletionProcessorRouterFilter_ProcessRequestBody(t *testing.T) {
 			logger:         slog.Default(),
 			tracer:         tracingapi.NoopTracer[openai.ChatCompletionRequest, openai.ChatCompletionResponse, openai.ChatCompletionResponseChunk]{},
 		}
-		resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: bodyFromModel(t, "some-model", false, nil)})
+		resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: bodyFromModel(t, "some-model", false, nil)})
 		require.NoError(t, err)
 		re, ok := resp.Response.(*extprocv3.ProcessingResponse_RequestBody)
 		require.True(t, ok)
@@ -212,7 +212,7 @@ func Test_chatCompletionProcessorRouterFilter_ProcessRequestBody(t *testing.T) {
 		}
 
 		// Test with streaming request.
-		resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: bodyFromModel(t, "test-model", true, nil)})
+		resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: bodyFromModel(t, "test-model", true, nil)})
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		require.True(t, mockTracerInstance.startSpanCalled)
@@ -243,7 +243,7 @@ func Test_chatCompletionProcessorRouterFilter_ProcessRequestBody(t *testing.T) {
 				logger:         slog.Default(),
 				tracer:         tracingapi.NoopTracer[openai.ChatCompletionRequest, openai.ChatCompletionResponse, openai.ChatCompletionResponseChunk]{},
 			}
-			resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: bodyFromModel(t, "some-model", true, opt)})
+			resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: bodyFromModel(t, "some-model", true, opt)})
 			require.NoError(t, err)
 			require.NotNil(t, resp)
 			require.NotNil(t, p.originalRequestBody.StreamOptions)
@@ -266,7 +266,7 @@ func Test_chatCompletionProcessorRouterFilter_ProcessRequestBody(t *testing.T) {
 				logger:         slog.Default(),
 				tracer:         tracingapi.NoopTracer[openai.ChatCompletionRequest, openai.ChatCompletionResponse, openai.ChatCompletionResponseChunk]{},
 			}
-			resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: bodyFromModel(t, "some-model", true, opt)})
+			resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: bodyFromModel(t, "some-model", true, opt)})
 			require.NoError(t, err)
 			require.NotNil(t, resp)
 			require.NotNil(t, p.originalRequestBody.StreamOptions)
@@ -846,7 +846,7 @@ func Test_chatCompletionProcessorUpstreamFilter_ProcessRequestHeaders(t *testing
 				require.NoError(t, err)
 				require.NotNil(t, resp)
 
-				_, err = p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: someBody})
+				_, err = p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: someBody})
 				require.Error(t, err, "Should return an error")
 				require.Contains(t, err.Error(), "failed to do auth request: authentication failed")
 
@@ -882,7 +882,7 @@ func Test_chatCompletionProcessorUpstreamFilter_ProcessRequestHeaders(t *testing
 				require.NoError(t, err)
 				require.NotNil(t, resp)
 
-				resp, err = p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: someBody})
+				resp, err = p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: someBody})
 				require.NoError(t, err, "ErrCredentialMissing must not propagate as a Go error")
 				require.NotNil(t, resp)
 
@@ -972,7 +972,7 @@ func Test_chatCompletionProcessorUpstreamFilter_ProcessRequestHeaders(t *testing
 				require.Empty(t, mm.responseModel)
 
 			// Body mutation in ProcessRequestBody
-			bodyResp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: someBody})
+			bodyResp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: someBody})
 			require.NoError(t, err)
 			require.NotNil(t, bodyResp)
 			bodyCommonRes := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody).RequestBody.Response
@@ -1037,7 +1037,7 @@ func Test_messagesProcessorUpstreamFilter_ProcessRequestHeaders_AWSAnthropicBeta
 	require.Equal(t, extprocv3.CommonResponse_CONTINUE, commonRes.Status)
 
 	// Body mutation in ProcessRequestBody
-	bodyResp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: raw})
+	bodyResp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: raw})
 	require.NoError(t, err)
 	bodyCommonRes := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody).RequestBody.Response
 
@@ -1120,7 +1120,7 @@ func Test_chatCompletionProcessorUpstreamFilter_ProcessRequestHeaders_BodyReplac
 		require.Equal(t, []byte("/v1/chat/completions"), commonRes.HeaderMutation.SetHeaders[0].Header.RawValue)
 
 		// Auth and body are handled in ProcessRequestBody
-		bodyResp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: someBody})
+		bodyResp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: someBody})
 		require.NoError(t, err)
 		require.NotNil(t, bodyResp)
 		bodyCommonRes := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody).RequestBody.Response
@@ -1176,7 +1176,7 @@ func Test_chatCompletionProcessorUpstreamFilter_ProcessRequestHeaders_BodyReplac
 		require.Equal(t, extprocv3.CommonResponse_CONTINUE, commonRes.Status)
 
 		// Body mutation in ProcessRequestBody
-		bodyResp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: someBody})
+		bodyResp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: someBody})
 		require.NoError(t, err)
 		require.NotNil(t, bodyResp)
 		bodyCommonRes := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody).RequestBody.Response
@@ -1802,7 +1802,7 @@ func TestChatCompletionProcessorUpstreamFilter_ProcessRequestHeaders_WithBodyMut
 		require.Equal(t, extprocv3.CommonResponse_CONTINUE, commonRes.Status)
 
 		// Body mutation in ProcessRequestBody
-		bodyResponse, err := p.ProcessRequestBody(ctx, &extprocv3.HttpBody{Body: bedrockTranslatedBody})
+		bodyResponse, err := p.ProcessRequestBody(ctx, &extprocv3.HttpBody{EndOfStream: true, Body: bedrockTranslatedBody})
 		require.NoError(t, err)
 		require.NotNil(t, bodyResponse)
 		bodyCommonRes := bodyResponse.Response.(*extprocv3.ProcessingResponse_RequestBody).RequestBody.Response
@@ -1906,7 +1906,7 @@ func TestChatCompletionProcessorUpstreamFilter_ProcessRequestHeaders_WithBodyMut
 		require.Equal(t, extprocv3.CommonResponse_CONTINUE, commonRes.Status)
 
 		// Body mutation in ProcessRequestBody
-		bodyResponse, err := p.ProcessRequestBody(ctx, &extprocv3.HttpBody{Body: bedrockTranslatedBody})
+		bodyResponse, err := p.ProcessRequestBody(ctx, &extprocv3.HttpBody{EndOfStream: true, Body: bedrockTranslatedBody})
 		require.NoError(t, err)
 		require.NotNil(t, bodyResponse)
 		bodyCommonRes := bodyResponse.Response.(*extprocv3.ProcessingResponse_RequestBody).RequestBody.Response
@@ -1968,7 +1968,7 @@ func TestChatCompletionProcessorUpstreamFilter_ProcessRequestHeaders_WithBodyMut
 		require.NotNil(t, retryResponse)
 
 		// Process request body for retry
-		retryBodyResponse, err := p.ProcessRequestBody(ctx, &extprocv3.HttpBody{Body: modifiedBedrockBody})
+		retryBodyResponse, err := p.ProcessRequestBody(ctx, &extprocv3.HttpBody{EndOfStream: true, Body: modifiedBedrockBody})
 		require.NoError(t, err)
 		require.NotNil(t, retryBodyResponse)
 
@@ -2248,7 +2248,7 @@ func Test_transcriptionProcessorRouterFilter_ProcessRequestBody_MultipartDispatc
 		tracer:         tracingapi.NoopTracer[openai.TranscriptionRequest, openai.TranscriptionResponse, openai.TranscriptionStreamEvent]{},
 	}
 
-	resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{Body: body})
+	resp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: body})
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
