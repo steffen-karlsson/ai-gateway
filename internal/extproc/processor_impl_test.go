@@ -950,14 +950,14 @@ func Test_chatCompletionProcessorUpstreamFilter_ProcessRequestHeaders(t *testing
 				require.NoError(t, err)
 				require.Equal(t, mt, p.translator)
 				require.NotNil(t, resp)
-			commonRes := resp.Response.(*extprocv3.ProcessingResponse_RequestHeaders).RequestHeaders.Response
-			require.Equal(t, extprocv3.CommonResponse_CONTINUE, commonRes.Status)
-			require.Nil(t, commonRes.BodyMutation, "no body mutation in headers response")
-			require.Len(t, commonRes.HeaderMutation.SetHeaders, 1)
-			require.Equal(t, "a", commonRes.HeaderMutation.SetHeaders[0].Header.Key)
-			require.Equal(t, []byte("b"), commonRes.HeaderMutation.SetHeaders[0].Header.RawValue)
-			// The internal AWS signing-host header is stripped before egress so a client can't spoof it.
-			require.Contains(t, commonRes.HeaderMutation.RemoveHeaders, internalapi.UpstreamHostHeader)
+				commonRes := resp.Response.(*extprocv3.ProcessingResponse_RequestHeaders).RequestHeaders.Response
+				require.Equal(t, extprocv3.CommonResponse_CONTINUE, commonRes.Status)
+				require.Nil(t, commonRes.BodyMutation, "no body mutation in headers response")
+				require.Len(t, commonRes.HeaderMutation.SetHeaders, 1)
+				require.Equal(t, "a", commonRes.HeaderMutation.SetHeaders[0].Header.Key)
+				require.Equal(t, []byte("b"), commonRes.HeaderMutation.SetHeaders[0].Header.RawValue)
+				// The internal AWS signing-host header is stripped before egress so a client can't spoof it.
+				require.Contains(t, commonRes.HeaderMutation.RemoveHeaders, internalapi.UpstreamHostHeader)
 
 				md := resp.DynamicMetadata
 				require.NotNil(t, md)
@@ -971,21 +971,21 @@ func Test_chatCompletionProcessorUpstreamFilter_ProcessRequestHeaders(t *testing
 				// Response model not set yet - only set when we get actual response
 				require.Empty(t, mm.responseModel)
 
-			// Body mutation in ProcessRequestBody
-			bodyResp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: someBody})
-			require.NoError(t, err)
-			require.NotNil(t, bodyResp)
-			bodyCommonRes := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody).RequestBody.Response
-			require.Equal(t, string(bodyMut), string(bodyCommonRes.BodyMutation.GetBody()))
-			// Auth headers are applied in ProcessRequestBody
-			var authHeaderFound bool
-			for _, h := range bodyCommonRes.HeaderMutation.SetHeaders {
-				if h.Header.Key == "foo" && string(h.Header.RawValue) == "mock-auth-handler" {
-					authHeaderFound = true
+				// Body mutation in ProcessRequestBody
+				bodyResp, err := p.ProcessRequestBody(t.Context(), &extprocv3.HttpBody{EndOfStream: true, Body: someBody})
+				require.NoError(t, err)
+				require.NotNil(t, bodyResp)
+				bodyCommonRes := bodyResp.Response.(*extprocv3.ProcessingResponse_RequestBody).RequestBody.Response
+				require.Equal(t, string(bodyMut), string(bodyCommonRes.BodyMutation.GetBody()))
+				// Auth headers are applied in ProcessRequestBody
+				var authHeaderFound bool
+				for _, h := range bodyCommonRes.HeaderMutation.SetHeaders {
+					if h.Header.Key == "foo" && string(h.Header.RawValue) == "mock-auth-handler" {
+						authHeaderFound = true
+					}
 				}
-			}
-			require.True(t, authHeaderFound, "auth header should be in ProcessRequestBody response")
-		})
+				require.True(t, authHeaderFound, "auth header should be in ProcessRequestBody response")
+			})
 		})
 	}
 }
@@ -1802,7 +1802,7 @@ func TestChatCompletionProcessorUpstreamFilter_ProcessRequestHeaders_WithBodyMut
 		require.Equal(t, extprocv3.CommonResponse_CONTINUE, commonRes.Status)
 
 		// Body mutation in ProcessRequestBody
-		bodyResponse, err := p.ProcessRequestBody(ctx, &extprocv3.HttpBody{EndOfStream: true, Body: bedrockTranslatedBody})
+		bodyResponse, err := p.ProcessRequestBody(ctx, &extprocv3.HttpBody{EndOfStream: true, Body: originalRequestBodyRaw})
 		require.NoError(t, err)
 		require.NotNil(t, bodyResponse)
 		bodyCommonRes := bodyResponse.Response.(*extprocv3.ProcessingResponse_RequestBody).RequestBody.Response
@@ -1906,7 +1906,7 @@ func TestChatCompletionProcessorUpstreamFilter_ProcessRequestHeaders_WithBodyMut
 		require.Equal(t, extprocv3.CommonResponse_CONTINUE, commonRes.Status)
 
 		// Body mutation in ProcessRequestBody
-		bodyResponse, err := p.ProcessRequestBody(ctx, &extprocv3.HttpBody{EndOfStream: true, Body: bedrockTranslatedBody})
+		bodyResponse, err := p.ProcessRequestBody(ctx, &extprocv3.HttpBody{EndOfStream: true, Body: originalRequestBodyRaw})
 		require.NoError(t, err)
 		require.NotNil(t, bodyResponse)
 		bodyCommonRes := bodyResponse.Response.(*extprocv3.ProcessingResponse_RequestBody).RequestBody.Response

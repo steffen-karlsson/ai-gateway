@@ -247,10 +247,10 @@ func Test_maybeModifyCluster(t *testing.T) {
 										},
 										ProcessingMode: &extprocv3.ProcessingMode{
 											RequestHeaderMode:  extprocv3.ProcessingMode_SEND,
-										RequestBodyMode:     extprocv3.ProcessingMode_BUFFERED,
-										RequestTrailerMode:  extprocv3.ProcessingMode_SKIP,
-										ResponseHeaderMode:  extprocv3.ProcessingMode_SKIP,
-										ResponseBodyMode:    extprocv3.ProcessingMode_NONE,
+											RequestBodyMode:    extprocv3.ProcessingMode_BUFFERED,
+											RequestTrailerMode: extprocv3.ProcessingMode_SKIP,
+											ResponseHeaderMode: extprocv3.ProcessingMode_SKIP,
+											ResponseBodyMode:   extprocv3.ProcessingMode_NONE,
 										},
 										MessageTimeout: durationpb.New(10 * time.Second),
 										GrpcService: &corev3.GrpcService{
@@ -385,10 +385,10 @@ func Test_maybeModifyCluster(t *testing.T) {
 										},
 										ProcessingMode: &extprocv3.ProcessingMode{
 											RequestHeaderMode:  extprocv3.ProcessingMode_SEND,
-										RequestBodyMode:     extprocv3.ProcessingMode_BUFFERED,
-										RequestTrailerMode:  extprocv3.ProcessingMode_SKIP,
-										ResponseHeaderMode:  extprocv3.ProcessingMode_SKIP,
-										ResponseBodyMode:    extprocv3.ProcessingMode_NONE,
+											RequestBodyMode:    extprocv3.ProcessingMode_BUFFERED,
+											RequestTrailerMode: extprocv3.ProcessingMode_SKIP,
+											ResponseHeaderMode: extprocv3.ProcessingMode_SKIP,
+											ResponseBodyMode:   extprocv3.ProcessingMode_NONE,
 										},
 										MessageTimeout: durationpb.New(10 * time.Second),
 										GrpcService: &corev3.GrpcService{
@@ -503,10 +503,10 @@ func Test_maybeModifyCluster(t *testing.T) {
 										},
 										ProcessingMode: &extprocv3.ProcessingMode{
 											RequestHeaderMode:  extprocv3.ProcessingMode_SEND,
-										RequestBodyMode:     extprocv3.ProcessingMode_BUFFERED,
-										RequestTrailerMode:  extprocv3.ProcessingMode_SKIP,
-										ResponseHeaderMode:  extprocv3.ProcessingMode_SKIP,
-										ResponseBodyMode:    extprocv3.ProcessingMode_NONE,
+											RequestBodyMode:    extprocv3.ProcessingMode_BUFFERED,
+											RequestTrailerMode: extprocv3.ProcessingMode_SKIP,
+											ResponseHeaderMode: extprocv3.ProcessingMode_SKIP,
+											ResponseBodyMode:   extprocv3.ProcessingMode_NONE,
 										},
 										MessageTimeout: durationpb.New(10 * time.Second),
 										GrpcService: &corev3.GrpcService{

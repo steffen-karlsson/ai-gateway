@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -92,8 +93,12 @@ type (
 		// when the request is retried.
 		originalRequestBody    *ReqT
 		originalRequestBodyRaw []byte
-		originalModel          internalapi.OriginalModel
-		forceBodyMutation      bool
+		// filteredRequestBodyRaw is captured after listener filters and before provider translation.
+		// Retries must use this representation, never the earlier router-phase snapshot.
+		filteredRequestBodyRaw     []byte
+		filteredRequestContentType string
+		originalModel              internalapi.OriginalModel
+		forceBodyMutation          bool
 		// tracer is the tracer used for requests.
 		tracer tracingapi.RequestTracer[ReqT, RespT, RespChunkT]
 		// span is the tracing span for this request, created in ProcessRequestBody.
@@ -132,9 +137,9 @@ type (
 		costs metrics.TokenUsage
 		// metrics tracking.
 		metrics metrics.Metrics
-		// bodyBuf accumulates request body chunks in FULL_DUPLEX_STREAMED mode.
-		// The complete body is processed when EndOfStream is true.
-		bodyBuf []byte
+		// Request-scoped credential metadata can arrive before the deferred body-auth callback.
+		requestMetadata         *corev3.Metadata
+		postListenerContentType string
 	}
 )
 
@@ -336,9 +341,9 @@ func (r *routerProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequest
 			RequestBody: &extprocv3.BodyResponse{
 				Response: &extprocv3.CommonResponse{
 					HeaderMutation:  headerMutation,
-					ClearRouteCache:  true,
-					BodyMutation:     bodyMutation,
-					Status:           status,
+					ClearRouteCache: true,
+					BodyMutation:    bodyMutation,
+					Status:          status,
 				},
 			},
 		},
@@ -349,12 +354,27 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) onRetry() bo
 	return u.parent.upstreamFilterCount > 1
 }
 
+// setEnvoyMetadata retains request-scoped credential metadata between ext-proc callbacks.
+func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) setEnvoyMetadata(metadata *corev3.Metadata) {
+	u.requestMetadata = metadata
+}
+
 // ProcessRequestHeaders implements [Processor.ProcessRequestHeaders].
 //
 // At the upstream filter, header-level mutations (path rewrite, auth, route
 // header mutations) are performed here, and body-level mutations
 // (modelNameOverride, httpBodyMutation) are deferred to ProcessRequestBody.
-func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequestHeaders(ctx context.Context, _ *corev3.HeaderMap) (res *extprocv3.ProcessingResponse, err error) {
+func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequestHeaders(ctx context.Context, headerMap *corev3.HeaderMap) (res *extprocv3.ProcessingResponse, err error) {
+	// Save the filtered body's type before header translation may create a provider boundary.
+	u.postListenerContentType = u.requestHeaders["content-type"]
+	for _, header := range headerMap.GetHeaders() {
+		if strings.EqualFold(header.GetKey(), "content-type") {
+			u.postListenerContentType = header.GetValue()
+			if header.GetRawValue() != nil {
+				u.postListenerContentType = string(header.GetRawValue())
+			}
+		}
+	}
 	defer func() {
 		if err != nil {
 			u.metrics.RecordRequestCompletion(ctx, false, u.requestHeaders)
@@ -432,10 +452,7 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessReque
 }
 
 // ProcessRequestBody implements [Processor.ProcessRequestBody].
-// In FULL_DUPLEX_STREAMED mode, the body arrives in chunks. Intermediate
-// chunks are accumulated in bodyBuf and the body is held (empty BodyMutation).
-// When EndOfStream is true, the complete body is processed: translation,
-// bodyMutation, and auth signing are applied to the full body.
+// BUFFERED mode supplies the complete body even when trailers follow and EndOfStream is false.
 func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessRequestBody(ctx context.Context, rawBody *extprocv3.HttpBody) (res *extprocv3.ProcessingResponse, err error) {
 	defer func() {
 		if err != nil {
@@ -443,32 +460,61 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessReque
 		}
 	}()
 
-	// Accumulate chunks until end_of_stream.
-	u.bodyBuf = append(u.bodyBuf, rawBody.Body...)
-	if !rawBody.EndOfStream {
-		return &extprocv3.ProcessingResponse{
-			Response: &extprocv3.ProcessingResponse_RequestBody{
-				RequestBody: &extprocv3.BodyResponse{
-					Response: &extprocv3.CommonResponse{
-						Status: extprocv3.CommonResponse_CONTINUE,
-						BodyMutation: &extprocv3.BodyMutation{
-							Mutation: &extprocv3.BodyMutation_Body{Body: []byte{}},
-						},
-					},
-				},
-			},
-		}, nil
+	ctx = backendauth.WithEnvoyMetadata(ctx, u.requestMetadata)
+	body := rawBody.Body
+	contentType := u.postListenerContentType
+	if contentType == "" {
+		contentType = u.parent.requestHeaders["content-type"]
+	}
+	if u.parent.filteredRequestBodyRaw == nil {
+		u.parent.filteredRequestBodyRaw = append([]byte{}, body...)
+		u.parent.filteredRequestContentType = contentType
+	} else if u.onRetry() {
+		// Envoy may replay a translated attempt body; translate the filtered client request again instead.
+		body = bytes.Clone(u.parent.filteredRequestBodyRaw)
+		contentType = u.parent.filteredRequestContentType
 	}
 
-	// All chunks received — process the complete body.
-	body := u.bodyBuf
-	u.bodyBuf = nil
+	requestBody := u.parent.originalRequestBody
+	parserBodyMutation := false
+	if !bytes.Equal(body, u.parent.originalRequestBodyRaw) {
+		// Translators can consume the typed request rather than raw bytes. Keep both representations coherent.
+		var parseErr error
+		var mutatedBody []byte
+		var filteredStream bool
+		var filteredModel internalapi.OriginalModel
+		costConfigured := len(u.parent.config.RequestCosts) > 0 || len(u.parent.config.GlobalRequestCosts) > 0
+		if strings.HasPrefix(strings.ToLower(contentType), "multipart/form-data") {
+			filteredModel, requestBody, filteredStream, mutatedBody, parseErr = u.parent.eh.ParseMultipartBody(body, contentType, costConfigured)
+		} else {
+			filteredModel, requestBody, filteredStream, mutatedBody, parseErr = u.parent.eh.ParseBody(body, costConfigured)
+		}
+		if parseErr != nil {
+			if userFacingErr := internalapi.GetUserFacingError(parseErr); userFacingErr != nil {
+				return u.respondLocally(ctx, 400, "BadRequest", userFacingErr.Error()), nil
+			}
+			return nil, fmt.Errorf("failed to parse post-filter request body: %w", parseErr)
+		}
+		// The listener selected response processing and tracing for the original protocol mode.
+		if filteredStream != u.parent.stream {
+			return u.respondLocally(ctx, 400, "BadRequest", "post-filter request must preserve stream mode"), nil
+		}
+		// Attribute the effective request model without changing the router's original-model identity.
+		u.metrics.SetRequestModel(cmp.Or(u.modelNameOverride, filteredModel))
+		if mutatedBody != nil {
+			body = mutatedBody
+			parserBodyMutation = true
+		}
+	}
 
 	// Determine forceBodyMutation: on retry we must replay the body.
-	forceBodyMutation := u.onRetry() || u.parent.forceBodyMutation
+	forceBodyMutation := u.onRetry() || u.parent.forceBodyMutation || parserBodyMutation
 
 	// Apply the translator's RequestBody on the actual body from Envoy.
-	newHeaders, newBody, err := u.translator.RequestBody(body, u.parent.originalRequestBody, forceBodyMutation)
+	if setter, ok := u.translator.(translator.ContentTypeSetter); ok {
+		setter.SetContentType(contentType)
+	}
+	newHeaders, newBody, err := u.translator.RequestBody(body, requestBody, forceBodyMutation)
 	if err != nil {
 		if userFacingErr := internalapi.GetUserFacingError(err); userFacingErr != nil {
 			u.logger.Info("returning user-facing error for invalid request", slog.String("error", err.Error()))
@@ -478,6 +524,38 @@ func (u *upstreamProcessor[ReqT, RespT, RespChunkT, EndpointSpecT]) ProcessReque
 	}
 
 	headerMutation, bodyMutation := mutationsFromTranslationResult(newHeaders, newBody)
+	// Retry header restoration may restore the listener's original multipart boundary.
+	// Start with the filtered body's type, then preserve translator and configured overrides.
+	if contentType != "" {
+		u.requestHeaders["content-type"] = contentType
+		headerMutation.SetHeaders = append([]*corev3.HeaderValueOption{{
+			AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+			Header:       &corev3.HeaderValue{Key: "content-type", RawValue: []byte(contentType)},
+		}}, headerMutation.SetHeaders...)
+	}
+	// Keep auth's header view coherent with the provider request, then reapply configured precedence.
+	for _, header := range newHeaders {
+		u.requestHeaders[header.Key()] = header.Value()
+	}
+	if u.headerMutator != nil {
+		sets, removes := u.headerMutator.Mutate(u.requestHeaders, false)
+		headerMutation.RemoveHeaders = append(headerMutation.RemoveHeaders, removes...)
+		// Envoy removes headers before applying sets. Discard superseded baseline/translator sets.
+		headerMutation.SetHeaders = slices.DeleteFunc(headerMutation.SetHeaders, func(header *corev3.HeaderValueOption) bool {
+			for _, name := range removes {
+				if strings.EqualFold(header.GetHeader().GetKey(), name) {
+					return true
+				}
+			}
+			return false
+		})
+		for _, header := range sets {
+			headerMutation.SetHeaders = append(headerMutation.SetHeaders, &corev3.HeaderValueOption{
+				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+				Header:       &corev3.HeaderValue{Key: header.Key(), RawValue: []byte(header.Value())},
+			})
+		}
+	}
 
 	// Apply backend httpBodyMutation on top of the translator's body (if any).
 	mutatorHasMutations := u.bodyMutator != nil && u.bodyMutator.HasMutations()

@@ -247,6 +247,12 @@ func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error
 
 func (s *Server) processMsg(ctx context.Context, p Processor, req *extprocv3.ProcessingRequest, internalReqID string, isUpstreamFilter bool) (*extprocv3.ProcessingResponse, error) {
 	l := loggerFromContext(ctx)
+	ctx = backendauth.WithEnvoyMetadata(ctx, req.GetMetadataContext())
+	if req.GetMetadataContext() != nil {
+		if receiver, ok := p.(interface{ setEnvoyMetadata(*corev3.Metadata) }); ok {
+			receiver.setEnvoyMetadata(req.GetMetadataContext())
+		}
+	}
 	switch value := req.Request.(type) {
 	case *extprocv3.ProcessingRequest_RequestHeaders:
 		requestHdrs := req.GetRequestHeaders().Headers
@@ -257,7 +263,6 @@ func (s *Server) processMsg(ctx context.Context, p Processor, req *extprocv3.Pro
 		}
 		// Thread Envoy dynamic metadata into context so credential override handlers
 		// can read it without changing the BackendAuthHandler interface.
-		ctx = backendauth.WithEnvoyMetadata(ctx, req.GetMetadataContext())
 		resp, err := p.ProcessRequestHeaders(ctx, requestHdrs)
 		if err != nil {
 			return nil, fmt.Errorf("cannot process request headers: %w", err)
